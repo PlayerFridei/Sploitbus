@@ -25,6 +25,10 @@ cd sploitbus
 ```
 
 ```sh
+pip install -r requirements.txt
+```
+
+```sh
 python sploitbus.py <ip> <port>
 ```
 
