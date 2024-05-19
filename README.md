@@ -17,7 +17,7 @@ A Python-based Modbus client that allows you to interact, modify and enumerate M
 First, clone the repository:
 
 ```sh
-git clone https://github.com/yourusername/modbus-client.git
+git clone https://github.com/PlayerFridei/Sploitbus
 ```
 
 ```sh
