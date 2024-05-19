@@ -1,5 +1,5 @@
 # Created by PlayerFridei
-# Version 0.1 Early Testing
+# Version 0.2 Early Testing
 
 import sys
 import logging
@@ -115,13 +115,10 @@ def message_parser(client):
         holding_registers = read_holding_registers(client, 0, 10)
         messages = []
         for reg in holding_registers:
-            try:
-                char = chr(reg)
-                if char.isprintable():
-                    messages.append(char)
-                else:
-                    messages.append('?')
-            except ValueError:
+            if reg >= 0 and reg <= 0xFFFF:
+                messages.append(chr(reg & 0xFF))
+                messages.append(chr((reg >> 8) & 0xFF))
+            else:
                 messages.append('?')
         return ''.join(messages)
     except Exception as e:
@@ -131,38 +128,66 @@ def message_parser(client):
 def grab_banner(client):
     try:
         coils = read_coils(client, 0, 10)
-        holding_registers = read_holding_registers(client, 0, 10)
-        input_registers = read_input_registers(client, 0, 10)
         discrete_inputs = read_discrete_inputs(client, 0, 10)
-        messages = message_parser(client)
+        holding_registers = read_holding_registers(client, 0, 20)
+        input_registers = read_input_registers(client, 0, 20)
 
-        banner_data = []
-        if coils:
-            banner_data.append(["Coils", coils])
-        if holding_registers:
-            banner_data.append(["Holding Registers", holding_registers])
-        if input_registers:
-            banner_data.append(["Input Registers", input_registers])
-        if discrete_inputs:
-            banner_data.append(["Discrete Inputs", discrete_inputs])
-        if messages:
-            banner_data.append(["Messages", messages])
+        banner_data = [
+            ["Coils", coils],
+            ["Discrete Inputs", discrete_inputs],
+            ["Holding Registers", holding_registers],
+            ["Input Registers", input_registers],
+            ["Messages", message_parser(client)]
+        ]
 
-        if banner_data:
-            banner_table = PrettyTable()
-            banner_table.field_names = ["Type", "Index", "Value"]
-            for section, data in banner_data:
-                if section == "Messages":
-                    banner_table.add_row([section, "", data])
-                else:
-                    for i, v in enumerate(data):
-                        banner_table.add_row([section, i, v])
-            print(Fore.CYAN + "Banner Information:" + Style.RESET_ALL)
-            print(banner_table)
-        else:
-            print(Fore.RED + "No banner information found." + Style.RESET_ALL)
+        banner_table = PrettyTable()
+        banner_table.field_names = ["Type", "Value"]
+        for banner_type, values in banner_data:
+            banner_table.add_row([banner_type, values])
+        
+        print(Fore.CYAN + "Banner Information:" + Style.RESET_ALL)
+        print(banner_table)
     except Exception as e:
         logging.error(f"Failed to grab banner: {e}")
+
+def find_unit_ids(client, start_unit_id, end_unit_id, timeout):
+    start = b"\x21\x00\x00\x00\x00\x06"
+    theend = b"\x04\x00\x01\x00\x00"
+    noll = b"\x00"
+
+    if not (1 <= start_unit_id <= 254):
+        print(Fore.RED + "start_unit_id must be between 1 and 254. Adjusting to 1." + Style.RESET_ALL)
+        start_unit_id = 1
+
+    if not (1 <= end_unit_id <= 254):
+        print(Fore.RED + f"end_unit_id must be between {start_unit_id} and 254. Adjusting to {start_unit_id}." + Style.RESET_ALL)
+        end_unit_id = start_unit_id
+
+    if start_unit_id > end_unit_id:
+        print(Fore.RED + "end_unit_id is less than start_unit_id. Setting them equal." + Style.RESET_ALL)
+        end_unit_id = start_unit_id
+
+    active_unit_ids = []
+    for unit_id in range(start_unit_id, end_unit_id + 1):
+        sploit = start + unit_id.to_bytes(1, 'big') + theend
+        try:
+            client.connect()
+            client.socket.sendall(sploit)
+            data = client.socket.recv(12)
+            client.close()
+
+            if not data:
+                data = noll * 4
+
+            if data[:4] == b"\x21\x00\x00\x00":
+                print(Fore.GREEN + f"Received: correct MODBUS/TCP from Unit ID {unit_id}" + Style.RESET_ALL)
+                active_unit_ids.append(unit_id)
+            else:
+                print(Fore.YELLOW + f"Received: incorrect/none data from Unit ID {unit_id} (probably not in use)" + Style.RESET_ALL)
+        except Exception as e:
+            logging.error(f"Exception while probing Unit ID {unit_id}: {e}")
+
+    return active_unit_ids
 
 def display_help():
     commands = [
@@ -181,10 +206,12 @@ def display_help():
         ["chaos_mode", "Alternate coil values in the first 100 coils."],
         ["network_details", "Show the network details of the Modbus server."],
         ["grab_banner", "Grab the banner of the Modbus server."],
+        ["find_unit_ids <start_unit_id> <end_unit_id> <timeout>", "Find active Modbus Unit IDs in the given range."],
         ["hex_modify <address> <hex_value>", "Modify register value at the given address."],
         ["hex_randomize <count>", "Randomize values in the given number of registers."],
         ["text_edit <text>", "Edit text in the first registers."],
         ["crash_system [speed]", "Overload the system with random data at the given speed (default: 0.01s)."],
+        ["help", "Display the list of commands."],
         ["exit", "Exit the client."]
     ]
     for cmd, desc in commands:
@@ -353,6 +380,15 @@ def main():
                     print(Fore.RED + f"Failed to get network details: {e}" + Style.RESET_ALL)
             elif cmd == "grab_banner":
                 grab_banner(client)
+            elif cmd == "find_unit_ids":
+                if len(command) != 4:
+                    print(Fore.RED + "Usage: find_unit_ids <start_unit_id> <end_unit_id> <timeout>" + Style.RESET_ALL)
+                    continue
+                start_unit_id = int(command[1])
+                end_unit_id = int(command[2])
+                timeout = int(command[3])
+                active_ids = find_unit_ids(client, start_unit_id, end_unit_id, timeout)
+                print(Fore.GREEN + f"Active Unit IDs: {active_ids}" + Style.RESET_ALL)
             elif cmd == "help":
                 display_help()
             elif cmd == "hex_modify":

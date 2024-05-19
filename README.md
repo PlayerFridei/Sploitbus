@@ -10,6 +10,7 @@ A Python-based Modbus client that allows you to interact, modify and enumerate M
 - Display all coils, discrete inputs, holding registers, and input registers.
 - Crash the Modbus system with random data (for testing purposes).
 - Command-line completion and colored output for enhanced usability.
+- Find Unit IDs
 - And much more!
 
 ## Installation
