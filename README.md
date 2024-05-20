@@ -8,9 +8,9 @@ A Python-based Modbus client that allows you to interact, modify and enumerate M
 - Grab the banner of the Modbus server.
 - Perform hex modifications and randomization.
 - Display all coils, discrete inputs, holding registers, and input registers.
-- Crash the Modbus system with random data (for testing purposes).
+- Attempt to Crash the Modbus system with random data (for testing purposes).
 - Command-line completion and colored output for enhanced usability.
-- Find Unit IDs
+- Find Unit IDs and Fast Enumeration.
 - And much more!
 
 ## Installation
