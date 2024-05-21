@@ -1,12 +1,12 @@
 # Created by PlayerFridei
-# Version 0.3 Early Testing
+# Version 0.3.5 Early Testing
 
 import sys
 import logging
 import random
 import readline
 from pymodbus.client import ModbusTcpClient
-from pymodbus.exceptions import ModbusException
+from pymodbus.exceptions import ModbusException, ModbusIOException
 from prettytable import PrettyTable
 import socket
 import time
@@ -26,50 +26,41 @@ current_unit_id = 1
 def set_unit_id(unit_id):
     global current_unit_id
     current_unit_id = unit_id
+    print(Fore.GREEN + f"Current Unit ID set to {unit_id}" + Style.RESET_ALL)
+
+def try_methods(client, methods):
+    for method in methods:
+        try:
+            result = method()
+            if result is not None:
+                return result
+        except (ModbusException, ModbusIOException) as e:
+            logging.error(f"Exception while trying method {method.__name__}: {e}")
+    return []
 
 def read_coils(client, address, count):
-    try:
-        result = client.read_coils(address, count, unit=current_unit_id)
-        if result.isError():
-            logging.error(f"Failed to read coils: {result}")
-            return []
-        return result.bits
-    except ModbusException as e:
-        logging.error(f"Exception while reading coils: {e}")
-        return []
+    methods = [
+        lambda: client.read_coils(address, count, unit=current_unit_id).bits
+    ]
+    return try_methods(client, methods) or [None] * count
 
 def read_discrete_inputs(client, address, count):
-    try:
-        result = client.read_discrete_inputs(address, count, unit=current_unit_id)
-        if result.isError():
-            logging.error(f"Failed to read discrete inputs: {result}")
-            return []
-        return result.bits
-    except ModbusException as e:
-        logging.error(f"Exception while reading discrete inputs: {e}")
-        return []
+    methods = [
+        lambda: client.read_discrete_inputs(address, count, unit=current_unit_id).bits
+    ]
+    return try_methods(client, methods) or [None] * count
 
 def read_holding_registers(client, address, count):
-    try:
-        result = client.read_holding_registers(address, count, unit=current_unit_id)
-        if result.isError():
-            logging.error(f"Failed to read holding registers: {result}")
-            return []
-        return result.registers
-    except ModbusException as e:
-        logging.error(f"Exception while reading holding registers: {e}")
-        return []
+    methods = [
+        lambda: client.read_holding_registers(address, count, unit=current_unit_id).registers
+    ]
+    return try_methods(client, methods) or [None] * count
 
 def read_input_registers(client, address, count):
-    try:
-        result = client.read_input_registers(address, count, unit=current_unit_id)
-        if result.isError():
-            logging.error(f"Failed to read input registers: {result}")
-            return []
-        return result.registers
-    except ModbusException as e:
-        logging.error(f"Exception while reading input registers: {e}")
-        return []
+    methods = [
+        lambda: client.read_input_registers(address, count, unit=current_unit_id).registers
+    ]
+    return try_methods(client, methods) or [None] * count
 
 def write_coil(client, address, value):
     try:
@@ -98,6 +89,12 @@ def write_multiple_coils(client, address, values):
             logging.error(f"Failed to write multiple coils: {result}")
         else:
             print(Fore.GREEN + f"Written multiple coils starting at address {address}" + Style.RESET_ALL)
+            # Verify the written values
+            new_values = read_coils(client, address, len(values))
+            if new_values and new_values == values:
+                print(Fore.GREEN + f"Verified multiple coils starting at address {address}" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"Verification failed for multiple coils starting at address {address}" + Style.RESET_ALL)
     except ModbusException as e:
         logging.error(f"Exception while writing multiple coils: {e}")
 
@@ -108,11 +105,18 @@ def write_multiple_registers(client, address, values):
             logging.error(f"Failed to write multiple registers: {result}")
         else:
             print(Fore.GREEN + f"Written multiple registers starting at address {address}" + Style.RESET_ALL)
+            # Verify the written values
+            new_values = read_holding_registers(client, address, len(values))
+            if new_values and new_values == values:
+                print(Fore.GREEN + f"Verified multiple registers starting at address {address}" + Style.RESET_ALL)
+            else:
+                print(Fore.RED + f"Verification failed for multiple registers starting at address {address}" + Style.RESET_ALL)
     except ModbusException as e:
         logging.error(f"Exception while writing multiple registers: {e}")
 
 def display_table(headers, data):
     table = PrettyTable(headers)
+    table.max_width = 40  # Adjust this as necessary for better readability
     for row in data:
         table.add_row(row)
     print(table)
@@ -132,44 +136,34 @@ def message_parser(client):
         logging.error(f"Failed to parse messages: {e}")
         return "No messages found."
 
-def try_read_function(client, read_function, address, count, retries=2):
-    for attempt in range(retries):
-        try:
-            result = read_function(client, address, count)
-            if result:
-                return result
-        except Exception as e:
-            logging.error(f"Attempt {attempt + 1} failed: {e}")
-            time.sleep(0.1)
-    return []
-
 def grab_banner(client):
     try:
         banner_data = []
 
-        coils = try_read_function(client, read_coils, 0, 10)
-        if not coils:
-            coils = try_alternative_read_coils(client, 0, 10)
-        banner_data.append(["Coils", coils if coils else "Unsupported"])
+        # Try reading coils
+        coils = read_coils(client, 0, 10) or ["Unsupported"]
+        banner_data.append(["Coils", coils])
 
-        discrete_inputs = try_read_function(client, read_discrete_inputs, 0, 10)
-        if not discrete_inputs:
-            discrete_inputs = try_alternative_read_discrete_inputs(client, 0, 10)
-        banner_data.append(["Discrete Inputs", discrete_inputs if discrete_inputs else "Unsupported"])
+        # Try reading discrete inputs
+        discrete_inputs = read_discrete_inputs(client, 0, 10) or ["Unsupported"]
+        banner_data.append(["Discrete Inputs", discrete_inputs])
 
-        holding_registers = try_read_function(client, read_holding_registers, 0, 10)
-        banner_data.append(["Holding Registers", holding_registers if holding_registers else "Unsupported"])
+        # Try reading holding registers
+        holding_registers = read_holding_registers(client, 0, 10) or ["Unsupported"]
+        banner_data.append(["Holding Registers", holding_registers])
 
-        input_registers = try_read_function(client, read_input_registers, 0, 10)
-        if not input_registers:
-            input_registers = try_alternative_read_input_registers(client, 0, 10)
-        banner_data.append(["Input Registers", input_registers if input_registers else "Unsupported"])
+        # Try reading input registers
+        input_registers = read_input_registers(client, 0, 10) or ["Unsupported"]
+        banner_data.append(["Input Registers", input_registers])
 
+        # Parse messages
         messages = message_parser(client)
         banner_data.append(["Messages", messages])
 
+        # Display the banner information
         banner_table = PrettyTable()
         banner_table.field_names = ["Type", "Value"]
+        banner_table.max_width = 40  # Adjust this as necessary for better readability
         for banner_type, values in banner_data:
             banner_table.add_row([banner_type, values])
         
@@ -178,41 +172,57 @@ def grab_banner(client):
     except Exception as e:
         logging.error(f"Failed to grab banner: {e}")
 
-def try_alternative_read_coils(client, address, count):
-    # Alternative method for reading coils if the first method fails
-    # This is a placeholder for any alternative approach you might have
-    return []
+def advanced_banner(client):
+    try:
+        banner_data = []
 
-def try_alternative_read_discrete_inputs(client, address, count):
-    # Alternative method for reading discrete inputs if the first method fails
-    # This is a placeholder for any alternative approach you might have
-    return []
+        # Try reading coils
+        coils = read_coils(client, 0, 10) or ["Unsupported"]
+        banner_data.append(["Coils", coils])
 
-def try_alternative_read_input_registers(client, address, count):
-    # Alternative method for reading input registers if the first method fails
-    # This is a placeholder for any alternative approach you might have
-    return []
+        # Try reading discrete inputs
+        discrete_inputs = read_discrete_inputs(client, 0, 10) or ["Unsupported"]
+        banner_data.append(["Discrete Inputs", discrete_inputs])
 
-def find_unit_ids(client, start_unit_id, end_unit_id, timeout):
+        # Try reading holding registers
+        holding_registers = read_holding_registers(client, 0, 10) or ["Unsupported"]
+        banner_data.append(["Holding Registers", holding_registers])
+
+        # Try reading input registers
+        input_registers = read_input_registers(client, 0, 10) or ["Unsupported"]
+        banner_data.append(["Input Registers", input_registers])
+
+        # Parse messages
+        messages = message_parser(client)
+        banner_data.append(["Messages", messages])
+
+        # Collect detailed information about each coil and register
+        coil_descriptions = [f"Coil {i}: {'ON' if coils[i] else 'OFF'}" if i < len(coils) else "Unknown function" for i in range(10)]
+        register_descriptions = [f"Holding Register {i} value: {holding_registers[i]}" if i < len(holding_registers) else "Unknown function" for i in range(10)]
+
+        banner_data.append(["Coil Descriptions", coil_descriptions])
+        banner_data.append(["Register Descriptions", register_descriptions])
+
+        # Display the advanced banner information
+        banner_table = PrettyTable()
+        banner_table.field_names = ["Type", "Value"]
+        banner_table.max_width = 40  # Adjust this as necessary for better readability
+        for banner_type, values in banner_data:
+            banner_table.add_row([banner_type, values])
+        
+        print(Fore.CYAN + "Advanced Banner Information:" + Style.RESET_ALL)
+        print(banner_table)
+    except Exception as e:
+        logging.error(f"Failed to grab advanced banner: {e}")
+
+def find_unit_ids(client):
     start = b"\x21\x00\x00\x00\x00\x06"
     theend = b"\x04\x00\x01\x00\x00"
     noll = b"\x00"
 
-    if not (1 <= start_unit_id <= 254):
-        print(Fore.RED + "start_unit_id must be between 1 and 254. Adjusting to 1." + Style.RESET_ALL)
-        start_unit_id = 1
-
-    if not (1 <= end_unit_id <= 254):
-        print(Fore.RED + f"end_unit_id must be between {start_unit_id} and 254. Adjusting to {start_unit_id}." + Style.RESET_ALL)
-        end_unit_id = start_unit_id
-
-    if start_unit_id > end_unit_id:
-        print(Fore.RED + "end_unit_id is less than start_unit_id. Setting them equal." + Style.RESET_ALL)
-        end_unit_id = start_unit_id
-
     active_unit_ids = []
-    with ThreadPoolExecutor(max_workers=30) as executor:
-        futures = [executor.submit(probe_unit_id, client, unit_id, start, theend, noll, timeout) for unit_id in range(start_unit_id, end_unit_id + 1)]
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(probe_unit_id, client, unit_id, start, theend, noll) for unit_id in range(1, 255)]
         for future in futures:
             result = future.result()
             if result:
@@ -220,7 +230,7 @@ def find_unit_ids(client, start_unit_id, end_unit_id, timeout):
     
     return active_unit_ids
 
-def probe_unit_id(client, unit_id, start, theend, noll, timeout):
+def probe_unit_id(client, unit_id, start, theend, noll):
     sploit = start + unit_id.to_bytes(1, 'big') + theend
     try:
         client.connect()
@@ -252,6 +262,23 @@ def enumerate_units(client):
         for future in futures:
             future.result()
 
+def network_details(client, ip):
+    try:
+        server_info = socket.gethostbyaddr(ip)
+        print(Fore.CYAN + f"Modbus Server Hostname: {server_info[0]}" + Style.RESET_ALL)
+        print(Fore.CYAN + f"Modbus Server IP Address: {ip}" + Style.RESET_ALL)
+        print(Fore.CYAN + f"Modbus Server Aliases: {', '.join(server_info[1])}" + Style.RESET_ALL)
+
+        # Placeholder for additional details
+        print(Fore.CYAN + "Modbus Server Version: Not Available" + Style.RESET_ALL)
+        print(Fore.CYAN + "Additional Server Details: Not Available" + Style.RESET_ALL)
+
+    except socket.herror as e:
+        logging.error(f"Failed to get network details: {e}")
+        print(Fore.RED + f"Failed to get network details: {e}" + Style.RESET_ALL)
+    except socket.gaierror:
+        print(Fore.CYAN + f"Modbus Server IP Address: {ip}" + Style.RESET_ALL)
+
 def display_help():
     commands = [
         ["read_coils <address> <count>", "Read coils from the given address."],
@@ -269,7 +296,8 @@ def display_help():
         ["chaos_mode", "Alternate coil values in the first 100 coils."],
         ["network_details", "Show the network details of the Modbus server."],
         ["grab_banner", "Grab the banner of the Modbus server."],
-        ["find_unit_ids <start_unit_id> <end_unit_id> <timeout>", "Find active Modbus Unit IDs in the given range."],
+        ["advanced_banner", "Grab a detailed banner of the Modbus server."],
+        ["find_unit_ids", "Find active Modbus Unit IDs in the range 1 to 254."],
         ["enumerate", "Enumerate all Unit IDs and display their banners."],
         ["set_unit_id <unit_id>", "Set the current Unit ID to use for operations."],
         ["hex_modify <address> <hex_value>", "Modify register value at the given address."],
@@ -332,9 +360,8 @@ def crash_system(client, speed=0.01):
         hex_value = format(random_value, '04x')
         random_unit_id = random.randint(1, 254)
         try:
-            client.unit_id = random_unit_id  # Set random unit ID
             write_register(client, i, random_value)
-            print(Fore.RED + f"Written random value {random_value} (hex {hex_value}) to register at address {i} with Unit ID {random_unit_id}" + Style.RESET_ALL)
+            print(Fore.RED + f"Written random value {random_value} (hex {hex_value}) to register at address {i}" + Style.RESET_ALL)
         except ModbusException as e:
             logging.error(f"Exception while writing in crash_system at address {i}: {e}")
         time.sleep(speed)
@@ -399,14 +426,24 @@ def main():
                     continue
                 address, value = int(command[1]), bool(int(command[2]))
                 write_coil(client, address, value)
-                print(Fore.GREEN + f"Written coil at address {address} to {value}" + Style.RESET_ALL)
+                # Verify the written value
+                new_value = read_coils(client, address, 1)
+                if new_value and new_value[0] == value:
+                    print(Fore.GREEN + f"Verified coil at address {address} is set to {value}" + Style.RESET_ALL)
+                else:
+                    print(Fore.RED + f"Verification failed for coil at address {address}" + Style.RESET_ALL)
             elif cmd == "write_register":
                 if len(command) != 3:
                     print(Fore.RED + "Usage: write_register <address> <value>" + Style.RESET_ALL)
                     continue
                 address, value = int(command[1]), int(command[2])
                 write_register(client, address, value)
-                print(Fore.GREEN + f"Written register at address {address} to {value}" + Style.RESET_ALL)
+                # Verify the written value
+                new_value = read_holding_registers(client, address, 1)
+                if new_value and new_value[0] == value:
+                    print(Fore.GREEN + f"Verified register at address {address} is set to {value}" + Style.RESET_ALL)
+                else:
+                    print(Fore.RED + f"Verification failed for register at address {address}" + Style.RESET_ALL)
             elif cmd == "write_multiple_coils":
                 if len(command) < 3:
                     print(Fore.RED + "Usage: write_multiple_coils <address> <values>" + Style.RESET_ALL)
@@ -421,6 +458,12 @@ def main():
                 address = int(command[1])
                 values = [int(v) for v in command[2:]]
                 write_multiple_registers(client, address, values)
+                # Verify the written values
+                new_values = read_holding_registers(client, address, len(values))
+                if new_values and new_values == values:
+                    print(Fore.GREEN + f"Verified multiple registers starting at address {address}" + Style.RESET_ALL)
+                else:
+                    print(Fore.RED + f"Verification failed for multiple registers starting at address {address}" + Style.RESET_ALL)
             elif cmd == "display_all_coils":
                 display_table(["Address", "Value"], [[i, v] for i, v in enumerate(read_coils(client, 0, 100))])
             elif cmd == "display_all_discrete_inputs":
@@ -437,24 +480,13 @@ def main():
                 logging.info("Chaos mode activated: Alternated coil values.")
                 display_table(["Address", "Value"], [[i, v] for i, v in enumerate(read_coils(client, 0, 100))])
             elif cmd == "network_details":
-                try:
-                    server_info = socket.gethostbyaddr(args.ip)
-                    print(Fore.CYAN + f"Modbus Server Hostname: {server_info[0]}" + Style.RESET_ALL)
-                    print(Fore.CYAN + f"Modbus Server IP Address: {args.ip}" + Style.RESET_ALL)
-                    print(Fore.CYAN + f"Modbus Server Aliases: {', '.join(server_info[1])}" + Style.RESET_ALL)
-                except socket.herror as e:
-                    logging.error(f"Failed to get network details: {e}")
-                    print(Fore.RED + f"Failed to get network details: {e}" + Style.RESET_ALL)
+                network_details(client, args.ip)
             elif cmd == "grab_banner":
                 grab_banner(client)
+            elif cmd == "advanced_banner":
+                advanced_banner(client)
             elif cmd == "find_unit_ids":
-                if len(command) != 4:
-                    print(Fore.RED + "Usage: find_unit_ids <start_unit_id> <end_unit_id> <timeout>" + Style.RESET_ALL)
-                    continue
-                start_unit_id = int(command[1])
-                end_unit_id = int(command[2])
-                timeout = int(command[3])
-                active_ids = find_unit_ids(client, start_unit_id, end_unit_id, timeout)
+                active_ids = find_unit_ids(client)
                 print(Fore.GREEN + f"Active Unit IDs: {active_ids}" + Style.RESET_ALL)
             elif cmd == "enumerate":
                 enumerate_units(client)
@@ -464,7 +496,6 @@ def main():
                     continue
                 unit_id = int(command[1])
                 set_unit_id(unit_id)
-                print(Fore.GREEN + f"Current Unit ID set to {unit_id}" + Style.RESET_ALL)
             elif cmd == "help":
                 display_help()
             elif cmd == "hex_modify":
@@ -473,18 +504,35 @@ def main():
                     continue
                 address, value = int(command[1]), command[2]
                 hex_modify(client, address, value)
+                # Verify the written value
+                new_value = read_holding_registers(client, address, 1)
+                if new_value and format(new_value[0], '04x') == value:
+                    print(Fore.GREEN + f"Verified register at address {address} is set to {value}" + Style.RESET_ALL)
+                else:
+                    print(Fore.RED + f"Verification failed for register at address {address}" + Style.RESET_ALL)
             elif cmd == "hex_randomize":
                 if len(command) != 2:
                     print(Fore.RED + "Usage: hex_randomize <count>" + Style.RESET_ALL)
                     continue
                 count = int(command[1])
                 hex_randomize(client, count)
+                # Verify the written values
+                new_values = read_holding_registers(client, 0, count)
+                print(Fore.GREEN + f"Randomized {count} registers." + Style.RESET_ALL)
             elif cmd == "text_edit":
                 if len(command) < 2:
                     print(Fore.RED + "Usage: text_edit <text>" + Style.RESET_ALL)
                     continue
                 text = ' '.join(command[1:])
                 text_edit(client, text)
+                # Verify the written values
+                hex_values = string_to_hex_list(text)
+                int_values = [int(hex_val, 16) for hex_val in hex_values]
+                new_values = read_holding_registers(client, 0, len(int_values))
+                if new_values and new_values == int_values:
+                    print(Fore.GREEN + f"Verified text written to registers: {text}" + Style.RESET_ALL)
+                else:
+                    print(Fore.RED + f"Verification failed for text written to registers" + Style.RESET_ALL)
             elif cmd == "crash_system":
                 speed = 0.01
                 if len(command) == 2:
