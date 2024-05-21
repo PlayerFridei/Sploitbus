@@ -1,5 +1,5 @@
 # Created by PlayerFridei
-# Version 0.3.5 Early Testing
+# Version 0.3.6 Early Testing
 
 import sys
 import logging
@@ -304,6 +304,7 @@ def display_help():
         ["hex_randomize <count>", "Randomize values in the given number of registers."],
         ["text_edit <text>", "Edit text in the first registers."],
         ["crash_system [speed]", "Overload the system with random data at the given speed (default: 0.01s)."],
+        ["monitor", "Continuously fetch and display the Modbus banner in real time."],
         ["help", "Display the list of commands."],
         ["exit", "Exit the client."]
     ]
@@ -366,6 +367,18 @@ def crash_system(client, speed=0.01):
             logging.error(f"Exception while writing in crash_system at address {i}: {e}")
         time.sleep(speed)
     logging.info("Crash system activated: System overloaded with random data.")
+
+def monitor(client):
+    try:
+        while True:
+            print("\033c", end="")  # Clear the screen
+            grab_banner(client)
+            time.sleep(1)
+    except KeyboardInterrupt:
+        print(Fore.CYAN + "\nMonitoring stopped." + Style.RESET_ALL)
+    except Exception as e:
+        logging.error(f"Exception during monitoring: {e}")
+        print(Fore.RED + f"Exception during monitoring: {e}" + Style.RESET_ALL)
 
 def main():
     parser = ArgumentParser()
@@ -541,6 +554,8 @@ def main():
                     except ValueError:
                         print(Fore.RED + "Invalid speed value. Using default speed 0.01s." + Style.RESET_ALL)
                 crash_system(client, speed)
+            elif cmd == "monitor":
+                monitor(client)
             else:
                 print(Fore.RED + "Unknown command. Type 'help' for a list of commands." + Style.RESET_ALL)
         except KeyboardInterrupt:
